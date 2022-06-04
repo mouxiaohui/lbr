@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use crate::args::Args;
 use crate::Result;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum ResponseMessage {
+    Succeed,
+    Failed { msg: String },
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BindsInformation {
@@ -16,10 +21,10 @@ pub struct Bind {
 }
 
 impl BindsInformation {
-    pub fn new(args: &Args) -> Result<Self> {
+    pub fn new(secret_key: String, binding: String) -> Result<Self> {
         let mut binds: Vec<Bind> = Vec::new();
 
-        for v in args.binding.split(",") {
+        for v in binding.split(",") {
             if let Some(local_remote) = v.split_once(":") {
                 let local = local_remote.0.parse::<u16>().map_err(|err| {
                     format!("端口号格式错误: {}, {}", local_remote.0, err.to_string())
@@ -33,7 +38,7 @@ impl BindsInformation {
         }
 
         Ok(Self {
-            secret_key: args.secret_key.clone(),
+            secret_key,
             binds,
         })
     }

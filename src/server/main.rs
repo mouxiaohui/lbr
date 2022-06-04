@@ -1,15 +1,17 @@
 use std::net::SocketAddr;
 
 use args::get_args;
+use lbr::{
+    messages::{BindsInformation, ResponseMessage},
+    transport::{read_message, write_message},
+};
+
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     net::{TcpListener, TcpStream},
 };
 
-use crate::messages::BindsInformation;
-
 mod args;
-mod messages;
 
 pub type Error = Box<dyn std::error::Error>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -40,15 +42,17 @@ async fn process(mut stream: TcpStream, addr: SocketAddr, secret_key: String) ->
     let mut recv_buf = [0u8; 512];
 
     // 接收需要绑定端口信息和密钥
-    let size = stream.read(&mut recv_buf).await?;
-    let binds_info: BindsInformation = bincode::deserialize(&recv_buf[0..size])?;
-    println!("[接收到绑定信息]");
+    let binds_info: BindsInformation = read_message(&mut stream, &mut recv_buf).await?;
+    println!("[接收到绑定信息]: {}", addr.to_string());
     println!("{}", binds_info);
 
+    // 判断密钥是否正确
     if secret_key != binds_info.secret_key {
-        stream.shutdown().await?;
-        return Err("密钥错误".into());
+        let msg = format!("[密钥错误]: {}", addr.to_string());
+        write_message(&mut stream, &ResponseMessage::Failed { msg: msg.clone() }).await?;
+        return Err(msg.into());
     }
+    write_message(&mut stream, &ResponseMessage::Succeed).await?;
 
     loop {
         let size = stream.read(&mut recv_buf).await?;
