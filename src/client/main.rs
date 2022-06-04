@@ -1,41 +1,28 @@
-use std::io;
+use std::time::Duration;
 
-use lbr::network;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use args::get_args;
+use messages::BindsInformation;
+use tokio::{io::AsyncWriteExt, net::TcpStream, time};
 
-const REMOTE_CONTROL_ADDR: &str = "127.0.0.1:8009";
-const REMOTE_SERVER_ADDR: &str = "127.0.0.1:8008";
+mod args;
+mod messages;
 
 pub type Error = Box<dyn std::error::Error>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    match network::create_tcp_conn(REMOTE_CONTROL_ADDR).await {
-        Ok(mut tcp_stream) => {
-            for _ in 0..10 {
-                let mut input = String::new();
-                io::stdin().read_line(&mut input).expect("Failed to read!");
+    let args = get_args();
+    let binds_info = BindsInformation::new(&args)?;
+    let binds_bytes = bincode::serialize(&binds_info)?;
+    let mut stream = TcpStream::connect(&args.addr).await?;
 
-                tcp_stream.write_all(&input.as_bytes()).await?;
+    println!("[发送绑定信息]");
+    println!("{}", binds_info);
+    stream.write_all(&binds_bytes).await?;
 
-                let mut reader = BufReader::new(&mut tcp_stream);
-                let mut buffer: Vec<u8> = Vec::new();
-                reader
-                    .read_until(b'\n', &mut buffer)
-                    .await
-                    .expect("Failed to read into buffer");
-                println!(
-                    "read from server: {}",
-                    std::str::from_utf8(&buffer).unwrap()
-                );
-            }
-
-            Ok(())
-        }
-        Err(err) => {
-            println!("[连接失败]: {}", REMOTE_CONTROL_ADDR);
-            Err(Box::from(err))
-        }
+    loop {
+        stream.write_all("Beating Heart".as_bytes()).await?;
+        time::sleep(Duration::from_secs(3)).await;
     }
 }
