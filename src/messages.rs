@@ -3,9 +3,15 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum ResponseMessage {
+pub enum Status {
     Succeed,
     Failed { msg: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum ResponseMessage {
+    Status(Status),
+    Heartbeat,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -37,10 +43,7 @@ impl BindsInformation {
             };
         }
 
-        Ok(Self {
-            secret_key,
-            binds,
-        })
+        Ok(Self { secret_key, binds })
     }
 }
 
@@ -68,4 +71,11 @@ impl Bind {
             remote_port,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateChannelInfo {
+    pub local_port: u16,
+    pub remote_port: u16,
+    pub channel_port: u16,
 }
