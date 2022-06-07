@@ -4,12 +4,11 @@ use std::time::Duration;
 
 use crate::args::get_args;
 use lbr::messages::{BindsInformation, CreateChannelInfo, ResponseMessage, Status};
-use lbr::transport::{read_message, write_message};
+use lbr::transport::{forward_bytes, read_message, write_message};
 use lbr::Result;
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time;
-
 
 mod args;
 
@@ -36,11 +35,10 @@ async fn main() -> Result<()> {
 }
 
 async fn process(mut client_stream: TcpStream, addr: SocketAddr, secret_key: String) -> Result<()> {
-    let mut recv_buf = Vec::new();
+    let mut recv_buf = vec![0u8; 1024];
 
     // 接收需要绑定端口信息和密钥
     let binds_info: BindsInformation = read_message(&mut client_stream, &mut recv_buf).await?;
-    recv_buf.clear();
     println!("[接收到绑定信息]: {}", addr.to_string());
     println!("{}", binds_info);
 
@@ -60,7 +58,7 @@ async fn process(mut client_stream: TcpStream, addr: SocketAddr, secret_key: Str
     )
     .await?;
 
-    // 创建隧道, 服务端需要将用户请求转发到对应的内网服务
+    // 创建隧道时发送给客户端的数据
     let mut channels_listener: HashMap<String, TcpListener> = HashMap::new();
     let mut create_channels_info = Vec::new();
     for bind in binds_info.binds {
@@ -76,17 +74,20 @@ async fn process(mut client_stream: TcpStream, addr: SocketAddr, secret_key: Str
             listener,
         );
     }
+
+    // 创建隧道, 服务端需要将用户请求转发到对应的内网服务
     let mut jhs = Vec::with_capacity(channels_listener.len());
     for (bind_port, listener) in channels_listener {
         let jh = tokio::spawn(async move {
-            if let Err(err) = create_channels(&bind_port, listener).await {
-                println!("[创建隧道失败]: {}", &bind_port);
+            if let Err(err) = relay_to_channel(&bind_port, listener).await {
+                println!("[绑定失败]: {}", &bind_port);
                 println!("ERROR: {}", err.to_string());
             };
         });
         jhs.push(jh);
     }
-    // 发送创建隧道信息
+
+    // 向客户端发送创建隧道信息
     write_message(&mut client_stream, &create_channels_info).await?;
 
     loop {
@@ -99,12 +100,24 @@ async fn process(mut client_stream: TcpStream, addr: SocketAddr, secret_key: Str
     }
 }
 
-async fn create_channels(bind_port: &str, listener: TcpListener) -> Result<()> {
-    let (mut stream, _) = listener.accept().await?;
-    println!("[隧道创建成功]: {}", bind_port);
+async fn relay_to_channel(bind_port: &str, listener: TcpListener) -> Result<()> {
+    let (_, remote_port) = bind_port.split_once(":").unwrap();
+    let (mut channel_stream, _) = listener.accept().await?;
+
+    let user_listener = TcpListener::bind(format!("0.0.0.0:{}", remote_port)).await?;
+    println!("[绑定成功]: {}", bind_port);
+    let mut buf = vec![0u8; 102400];
     loop {
-        write_message(&mut stream, &format!("隧道消息: {}", bind_port)).await?;
-        // stream.write(format!("隧道消息: {}", bind_port).as_bytes()).await?;
-        time::sleep(Duration::from_secs(3)).await;
+        let (mut user_stream, addr) = user_listener.accept().await?;
+        println!("监听到: {}", addr);
+        forward_bytes(&mut user_stream, &mut channel_stream, &mut buf).await?;
+        let mut peek_buf = vec![0u8; 1];
+
+        loop {
+            let peek_size = channel_stream.peek(&mut peek_buf).await?;
+            if peek_size > 0 {
+                forward_bytes(&mut channel_stream, &mut user_stream, &mut buf).await?;
+            }
+        }
     }
 }

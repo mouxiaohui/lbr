@@ -1,8 +1,6 @@
-use std::time::Duration;
-
 use args::get_args;
 use lbr::messages::{BindsInformation, CreateChannelInfo, ResponseMessage, Status};
-use lbr::transport::{read_message, write_message};
+use lbr::transport::{forward_bytes, read_message, write_message};
 use lbr::Result;
 
 use tokio::net::TcpStream;
@@ -14,7 +12,7 @@ async fn main() -> Result<()> {
     let args = get_args();
     let (server_ip, _) = args.addr.split_once(":").expect("服务端地址错误!");
     let mut stream = TcpStream::connect(&args.addr).await?;
-    let mut recv_buf = Vec::new();
+    let mut recv_buf = vec![0u8; 1024];
 
     // 发送端口绑定信息
     let binds_info = BindsInformation::new(args.secret_key, args.binding)?;
@@ -35,40 +33,33 @@ async fn main() -> Result<()> {
     }
 
     // 创建隧道
-    recv_buf.clear();
     let create_channels_info: Vec<CreateChannelInfo> =
         read_message(&mut stream, &mut recv_buf).await?;
+    println!("{:?}", create_channels_info);
     for channel_info in create_channels_info {
         let channel_addr = format!("{}:{}", &server_ip, channel_info.channel_port);
         tokio::spawn(async move {
-            let timeout_job =
-                tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(channel_addr))
-                    .await;
-
+            let res_tcp = TcpStream::connect(channel_addr).await;
             let bind_port = format!("{}:{}", channel_info.local_port, channel_info.remote_port);
-            match timeout_job {
-                Ok(r) => match r {
-                    Ok(stream) => {
-                        println!("[隧道创建成功]: {}", bind_port);
-                        if let Err(err) = channel_handler(stream).await {
-                            println!("[隧道断开连接]: {}", bind_port);
-                            println!("ERROR: {}", err.to_string());
-                        };
-                    }
-                    Err(err) => {
-                        println!("[隧道创建失败]: {}", bind_port);
+            println!("[绑定成功]: {}", bind_port);
+            match res_tcp {
+                Ok(channel_stream) => {
+                    if let Err(err) =
+                        relay_to_local(&channel_info.local_port.to_string(), channel_stream).await
+                    {
+                        println!("[隧道断开连接]: {}", bind_port);
                         println!("ERROR: {}", err.to_string());
                     }
-                },
-                Err(_) => {
-                    println!("[隧道连接超时]: {}", bind_port)
+                }
+                Err(err) => {
+                    println!("[隧道创建失败]: {}", bind_port);
+                    println!("ERROR: {}", err.to_string());
                 }
             };
         });
     }
 
     loop {
-        recv_buf.clear();
         if let Err(err) = read_message::<ResponseMessage>(&mut stream, &mut recv_buf).await {
             println!("[断开连接]: {}", &args.addr);
             println!("ERROR: {}", err.to_string());
@@ -80,11 +71,22 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn channel_handler(mut stream: TcpStream) -> Result<()> {
-    let mut recv_buf = Vec::new();
+async fn relay_to_local(local_port: &str, mut channel_stream: TcpStream) -> Result<()> {
+    let mut buf = vec![0u8; 102400];
+    let mut peek_buf = vec![0u8; 1];
+    let mut local_stream = TcpStream::connect(format!("127.0.0.1:{}", local_port)).await?;
+
     loop {
-        recv_buf.clear();
-        let msg: &str = read_message(&mut stream, &mut recv_buf).await?;
-        println!("{}", msg);
+        let peek_size = channel_stream.peek(&mut peek_buf).await?;
+        if peek_size > 0 {
+            println!("写入本地服务");
+            forward_bytes(&mut channel_stream, &mut local_stream, &mut buf).await?;
+        }
+        loop {
+            let peek_size = local_stream.peek(&mut peek_buf).await?;
+            if peek_size > 0 {
+                forward_bytes(&mut local_stream, &mut channel_stream, &mut buf).await?;
+            }
+        }
     }
 }
