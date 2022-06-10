@@ -22,17 +22,3 @@ pub async fn read_message<'a, T: Deserialize<'a>>(
 
     Ok(resp)
 }
-
-pub async fn forward_bytes(
-    origin: &mut TcpStream,
-    target: &mut TcpStream,
-    buf: &mut Vec<u8>,
-) -> Result<()> {
-    loop {
-        let size = origin.read(buf).await?;
-        if size == 0 {
-            return Ok(());
-        }
-        target.write(&buf[..size]).await?;
-    }
-}
