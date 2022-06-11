@@ -19,8 +19,7 @@ async fn main() -> Result<()> {
     let main_addr = format!("0.0.0.0:{}", args.port);
     let main_listener = TcpListener::bind(&main_addr).await?;
     println!("[服务端运行]: {}", &main_addr);
-    loop {
-        let (stream, addr) = main_listener.accept().await?;
+    while let Ok((stream, addr)) = main_listener.accept().await {
         println!("[新客户端连接]: {}", addr);
         tokio::spawn(async move {
             if let Err(err) = process(stream).await {
@@ -29,6 +28,8 @@ async fn main() -> Result<()> {
             println!("[客户端断开连接]: {}", addr);
         });
     }
+
+    Ok(())
 }
 
 async fn process(stream: TcpStream) -> Result<()> {
@@ -55,30 +56,36 @@ async fn process(stream: TcpStream) -> Result<()> {
 }
 
 async fn visit_server(client: Arc<Mutex<TcpStream>>, port: &str) -> Result<()> {
-    // let mut buf = vec![0; 10240];
     let visit_addr = format!("0.0.0.0:{}", port);
     let visit_listener = TcpListener::bind(&visit_addr).await?;
-    let channel_listener = TcpListener::bind("0.0.0.0:0").await?;
-    let channel_port = channel_listener.local_addr()?.port().to_string();
     println!("[访问内网服务]: {}", visit_listener.local_addr()?);
 
-    loop {
-        let (mut visit, _) = visit_listener.accept().await?;
-        let mut client_guard = client.lock().await;
-        let create_channel = ResponseMessage::CreateChannel(channel_port.clone());
-        write_message(&mut client_guard, &create_channel).await?;
+    while let Ok((mut visit, _)) = visit_listener.accept().await {
+        let client_clone = client.clone();
 
-        let (mut channel, _) = channel_listener.accept().await?;
-        println!("成功创建隧道");
-        if let Err(err) = copy(&mut visit, &mut channel).await {
-            if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                println!("OK")
-            }
-        };
-        if let Err(err) = copy(&mut channel, &mut visit).await {
-            if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                println!("OK")
-            }
-        };
+        tokio::spawn(async move {
+            let mut client_guard = client_clone.lock().await;
+            if write_message(&mut client_guard, &ResponseMessage::NewRequest)
+                .await
+                .is_ok()
+            {
+                let res = async move {
+                    let (mut visit_rx, mut visit_tx) = visit.split();
+                    let (mut client_rx, mut client_tx) = client_guard.split();
+                    let f1 = copy(&mut client_rx, &mut visit_tx);
+                    let f2 = copy(&mut visit_rx, &mut client_tx);
+                    tokio::select! {
+                        res = f1 => res,
+                        res = f2 => res,
+                    }
+                };
+
+                if let Err(e) = res.await {
+                    println!("Error: {}", e);
+                }
+            };
+        });
     }
+
+    Ok(())
 }

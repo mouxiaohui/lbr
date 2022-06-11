@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ResponseMessage {
     Heartbeat,
-    CreateChannel(String),
+    NewRequest,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
