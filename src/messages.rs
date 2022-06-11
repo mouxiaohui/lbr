@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+// pub const Hearbeat 
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum ResponseMessage {
+pub enum Message {
     Heartbeat,
     NewRequest,
 }
