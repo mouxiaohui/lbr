@@ -1,23 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-// pub const Hearbeat 
+pub const HEARTBEAT: u8 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum Message {
-    Heartbeat,
-    NewRequest,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Bind {
+pub struct BindMessage {
     pub secret_key: String,
-    pub remote_port: String,
+    pub server_ip: String,
+    pub remote_port: u16,
 }
 
-impl Bind {
-    pub fn new(secret_key: String, remote_port: String) -> Self {
+impl BindMessage {
+    pub fn new(secret_key: String, server_ip: String, remote_port: u16) -> Self {
         Self {
             secret_key,
+            server_ip,
             remote_port,
         }
     }

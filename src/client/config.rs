@@ -24,7 +24,7 @@ impl std::fmt::Display for ConfigError {
 #[clap(author, version)]
 pub struct Args {
     #[clap(short = 'i', long)]
-    remote_addr: String,
+    server_addr: String,
 
     #[clap(short, long)]
     secret_key: String,
@@ -39,46 +39,62 @@ pub struct Args {
 
 #[derive(Debug)]
 pub struct Bind {
-    pub local_port: String,
-    pub remote_port: String,
+    pub local_addr: SocketAddr,
+    pub remote_addr: SocketAddr,
+}
+
+impl Bind {
+    pub fn local_port(&self) -> u16 {
+        self.local_addr.port()
+    }
+
+    pub fn remote_port(&self) -> u16 {
+        self.local_addr.port()
+    }
+
+    pub fn server_ip(&self) -> IpAddr{
+        self.remote_addr.ip()
+    }
 }
 
 #[derive(Debug)]
 pub struct ClientConfig {
-    pub remote_ip: IpAddr,
-    pub remote_port: String,
+    pub server_ip: IpAddr,
+    pub server_port: u16,
     pub secret_key: String,
     pub binds: Vec<Bind>,
 }
 
 impl ClientConfig {
     pub fn new(args: Args) -> Result<Self> {
-        let (remote_ip, remote_port) = args
-            .remote_addr
+        let (server_ip, server_port) = args
+            .server_addr
             .split_once(":")
-            .ok_or(ConfigError::ServerAddrTypeError(args.remote_addr.clone()))?;
+            .ok_or(ConfigError::ServerAddrTypeError(args.server_addr.clone()))?;
+        let server_ip = server_ip.parse()?;
+        let server_port = server_port.parse()?;
 
-        let bs: Vec<&str> = args.binds.split(",").collect();
         let mut binds = Vec::new();
+        let bs: Vec<&str> = args.binds.split(",").collect();
         for b in bs {
             let (local_port, remote_port) = b
                 .split_once(":")
                 .ok_or(ConfigError::BindsTypeError(args.binds.clone()))?;
             binds.push(Bind {
-                local_port: local_port.to_string(),
-                remote_port: remote_port.to_string(),
+                local_addr: format!("127.0.0.1:{}", local_port).parse()?,
+                remote_addr: SocketAddr::new(server_ip, remote_port.parse()?),
             })
         }
 
         Ok(Self {
             secret_key: args.secret_key,
-            remote_ip: remote_ip.parse()?,
-            remote_port: remote_port.to_string(),
+            server_ip,
+            server_port,
             binds,
         })
     }
 
-    pub fn remote_addr(&self) -> Result<SocketAddr> {
-        Ok(format!("{}:{}", self.remote_ip, self.remote_port).parse()?)
+    pub fn server_addr(&self) -> Result<SocketAddr> {
+        Ok(format!("{}:{}", self.server_ip, self.server_port).parse()?)
     }
 }
